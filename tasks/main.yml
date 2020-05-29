@@ -1,0 +1,101 @@
+---
+# tasks file for certs
+- name: ensure local certificates dir exists
+  connection: local
+  run_once: True
+  become: no
+  file:
+    path: "{{ cert_dir }}"
+    state: directory
+  tags:
+    - docker
+
+- name: ensure remote certificates dir exists
+  become: no
+  file:
+    path: "{{ cert_dir_host }}"
+    state: directory
+  tags:
+    - docker
+
+- name: Check if certificates were generated
+  become: no
+  connection: local
+  stat:
+    path: "{{ cert_dir }}/{{ tls_ca_cert }}"
+  register: certificates
+  tags:
+    - certificate
+    - docker
+
+- name: block certificate
+  become: no
+  block:
+    - name: Generate CA cert
+      connection: local
+      become: no
+      import_tasks: generate-ca-cert.yaml
+      when:
+        - generate_tls_certs
+        - generate_ca_cert|bool
+
+    - name: Generate client cert
+      connection: local
+      become: no
+      import_tasks: generate-client-cert.yaml
+      when:
+        - generate_tls_certs
+        - generate_client_cert|bool
+
+    - name: Generate server cert
+      become: no
+      connection: local
+      import_tasks: generate-server-cert.yaml
+      when:
+        - generate_tls_certs
+        - generate_server_cert|bool
+
+    - name: symlinks local certificates
+      connection: local
+      become: no
+      file:
+        path: "{{ cert_dir }}/{{ item[1] }}"
+        src: "{{ cert_dir }}/{{ item[0] }}"
+        state: link
+      when: inventory_hostname in groups.ATHENS
+      loop:
+        - [ "{{ tls_ca_cert }}", "ca.pem" ]
+        - [ "{{ tls_client_cert }}", "cert.pem" ]
+        - [ "{{ tls_client_key }}", "key.pem" ]
+
+    - name: copy certificates to host
+      become: no
+      copy:
+        src: "{{ cert_dir }}/{{ item }}"
+        dest: "{{ cert_dir_host }}/{{ item }}"
+      loop:
+        - "{{ tls_ca_cert }}"
+        - "{{ tls_ca_key }}"
+        - "{{ tls_client_cert }}"
+        - "{{ tls_client_key }}"
+        - "{{ tls_client_csr }}"
+        - "{{ inventory_hostname }}.csr"
+        - "{{ inventory_hostname }}.key"
+        - "{{ inventory_hostname }}.pem"
+      tags:
+        - docker
+
+    - name: symlinks host certificates
+      become: no
+      file:
+        path: "{{ cert_dir_host }}/{{ item[1] }}"
+        src: "{{ cert_dir_host }}/{{ item[0] }}"
+        state: link
+      when: inventory_hostname in groups.ATHENS
+      loop:
+        - [ "{{ tls_ca_cert }}", "ca.pem" ]
+        - [ "{{ tls_client_cert }}", "cert.pem" ]
+        - [ "{{ tls_client_key }}", "key.pem" ]
+  when: inventory_hostname in groups.ATHENS and not certificates.stat.exists
+  tags:
+    - docker
